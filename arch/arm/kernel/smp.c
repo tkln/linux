@@ -26,6 +26,7 @@
 #include <linux/completion.h>
 #include <linux/cpufreq.h>
 #include <linux/irq_work.h>
+#include <linux/seq_buf.h>
 
 #include <linux/atomic.h>
 #include <asm/smp.h>
@@ -72,6 +73,7 @@ enum ipi_msg_type {
 	IPI_CPU_STOP,
 	IPI_IRQ_WORK,
 	IPI_COMPLETION,
+	IPI_CPU_BACKTRACE,
 };
 
 static DECLARE_COMPLETION(cpu_running);
@@ -456,6 +458,7 @@ static const char *ipi_types[NR_IPI] __tracepoint_string = {
 	S(IPI_CPU_STOP, "CPU stop interrupts"),
 	S(IPI_IRQ_WORK, "IRQ work interrupts"),
 	S(IPI_COMPLETION, "completion interrupts"),
+	S(IPI_CPU_BACKTRACE, "backtrace interrupts"),
 };
 
 static void smp_cross_call(const struct cpumask *target, unsigned int ipinr)
@@ -570,6 +573,8 @@ void handle_IPI(int ipinr, struct pt_regs *regs)
 	unsigned int cpu = smp_processor_id();
 	struct pt_regs *old_regs = set_irq_regs(regs);
 
+	BUILD_BUG_ON(SMP_IPI_FIQ_MASK != BIT(IPI_CPU_BACKTRACE));
+
 	if ((unsigned)ipinr < NR_IPI) {
 		trace_ipi_entry(ipi_types[ipinr]);
 		__inc_irq_stat(cpu, ipi_irqs[ipinr]);
@@ -620,6 +625,12 @@ void handle_IPI(int ipinr, struct pt_regs *regs)
 	case IPI_COMPLETION:
 		irq_enter();
 		ipi_complete(cpu);
+		irq_exit();
+		break;
+
+	case IPI_CPU_BACKTRACE:
+		irq_enter();
+		ipi_cpu_backtrace(regs);
 		irq_exit();
 		break;
 
@@ -717,3 +728,60 @@ static int __init register_cpufreq_notifier(void)
 core_initcall(register_cpufreq_notifier);
 
 #endif
+
+/* For reliability, we're prepared to waste bits here. */
+static DECLARE_BITMAP(backtrace_mask, NR_CPUS) __read_mostly;
+static  cpumask_t printtrace_mask;
+
+void arch_trigger_all_cpu_backtrace(bool include_self)
+{
+	int i;
+	int this_cpu = get_cpu();
+
+	if (0 != prepare_nmi_printk(to_cpumask(backtrace_mask))) {
+		/*
+		 * If there is already an nmi printk sequence in
+		 * progress then just give up...
+		 */
+		put_cpu();
+		return;
+	}
+
+	if (!include_self)
+		cpumask_clear_cpu(this_cpu, to_cpumask(backtrace_mask));
+	cpumask_copy(&printtrace_mask, to_cpumask(backtrace_mask));
+
+	if (!cpumask_empty(to_cpumask(backtrace_mask))) {
+		pr_info("Sending FIQ to %s CPUs:\n",
+			(include_self ? "all" : "other"));
+		smp_cross_call(to_cpumask(backtrace_mask), IPI_CPU_BACKTRACE);
+	}
+
+	/* Wait for up to 10 seconds for all CPUs to do the backtrace */
+	for (i = 0; i < 10 * 1000; i++) {
+		if (cpumask_empty(to_cpumask(backtrace_mask)))
+			break;
+		mdelay(1);
+		touch_softlockup_watchdog();
+	}
+
+	complete_nmi_printk(&printtrace_mask);
+	put_cpu();
+}
+
+void ipi_cpu_backtrace(struct pt_regs *regs)
+{
+	int cpu;
+	printk_func_t orig;
+
+	cpu = smp_processor_id();
+
+	if (cpumask_test_cpu(cpu, to_cpumask(backtrace_mask))) {
+		orig = this_cpu_begin_nmi_printk();
+		pr_warn("FIQ backtrace for cpu %d\n", cpu);
+		show_regs(regs);
+		this_cpu_end_nmi_printk(orig);
+
+		cpumask_clear_cpu(cpu, to_cpumask(backtrace_mask));
+	}
+}
