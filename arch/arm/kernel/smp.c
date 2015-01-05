@@ -751,6 +751,16 @@ void arch_trigger_all_cpu_backtrace(bool include_self)
 		cpumask_clear_cpu(this_cpu, to_cpumask(backtrace_mask));
 	cpumask_copy(&printtrace_mask, to_cpumask(backtrace_mask));
 
+	/*
+	 * If irqs are disabled on the current processor then, if
+	 * IPI_CPU_BACKTRACE is delivered using IRQ, we will won't be able to
+	 * react to IPI_CPU_BACKTRACE until we leave this function. We avoid
+	 * the potential timeout (not to mention the failure to print useful
+	 * information) by calling the backtrace directly.
+	 */
+	if (include_self && irqs_disabled())
+		ipi_cpu_backtrace(in_interrupt() ? get_irq_regs() : NULL);
+
 	if (!cpumask_empty(to_cpumask(backtrace_mask))) {
 		pr_info("Sending FIQ to %s CPUs:\n",
 			(include_self ? "all" : "other"));
@@ -779,7 +789,10 @@ void ipi_cpu_backtrace(struct pt_regs *regs)
 	if (cpumask_test_cpu(cpu, to_cpumask(backtrace_mask))) {
 		orig = this_cpu_begin_nmi_printk();
 		pr_warn("FIQ backtrace for cpu %d\n", cpu);
-		show_regs(regs);
+		if (regs != NULL)
+			show_regs(regs);
+		else
+			dump_stack();
 		this_cpu_end_nmi_printk(orig);
 
 		cpumask_clear_cpu(cpu, to_cpumask(backtrace_mask));
