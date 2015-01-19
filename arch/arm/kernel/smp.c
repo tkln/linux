@@ -798,3 +798,8 @@ void ipi_cpu_backtrace(struct pt_regs *regs)
 		cpumask_clear_cpu(cpu, to_cpumask(backtrace_mask));
 	}
 }
+
+void send_nmi_ipi_mask(const struct cpumask *mask)
+{
+	smp_cross_call(mask, IPI_CPU_BACKTRACE);
+}
