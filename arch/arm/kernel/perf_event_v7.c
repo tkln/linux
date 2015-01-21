@@ -744,7 +744,6 @@ static void armv7pmu_enable_event(struct perf_event *event)
 
 static void armv7pmu_disable_event(struct perf_event *event)
 {
-	unsigned long flags;
 	struct hw_perf_event *hwc = &event->hw;
 	struct arm_pmu *cpu_pmu = to_arm_pmu(event->pmu);
 	struct pmu_hw_events *events = this_cpu_ptr(cpu_pmu->hw_events);
@@ -757,11 +756,6 @@ static void armv7pmu_disable_event(struct perf_event *event)
 	}
 
 	/*
-	 * Disable counter and interrupt
-	 */
-	raw_spin_lock_irqsave(&events->pmu_lock, flags);
-
-	/*
 	 * Disable counter
 	 */
 	armv7_pmnc_disable_counter(idx);
@@ -770,8 +764,6 @@ static void armv7pmu_disable_event(struct perf_event *event)
 	 * Disable interrupt for this counter
 	 */
 	armv7_pmnc_disable_intens(idx);
-
-	raw_spin_unlock_irqrestore(&events->pmu_lock, flags);
 }
 
 static irqreturn_t armv7pmu_handle_irq(int irq_num, void *dev)
@@ -831,7 +823,8 @@ static irqreturn_t armv7pmu_handle_irq(int irq_num, void *dev)
 	 * platforms that can have the PMU interrupts raised as an NMI, this
 	 * will not work.
 	 */
-	irq_work_run();
+	if (!in_nmi())
+		irq_work_run();
 
 	return IRQ_HANDLED;
 }
