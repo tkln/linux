@@ -571,6 +571,17 @@ int can_request_irq(unsigned int irq, unsigned long irqflags)
 	return canrequest;
 }
 
+int __irq_set_nmi_routing(struct irq_desc *desc, unsigned int irq,
+			   unsigned int nmi)
+{
+	struct irq_chip *chip = desc->irq_data.chip;
+
+	if (!chip || !chip->irq_set_nmi_routing)
+		return -EINVAL;
+
+	return chip->irq_set_nmi_routing(&desc->irq_data, nmi);
+}
+
 int __irq_set_trigger(struct irq_desc *desc, unsigned int irq,
 		      unsigned long flags)
 {
@@ -966,6 +977,16 @@ __setup_irq(unsigned int irq, struct irq_desc *desc, struct irqaction *new)
 
 	if (desc->irq_data.chip == &no_irq_chip)
 		return -ENOSYS;
+
+	if (new->flags & __IRQF_NMI) {
+		if (new->flags & IRQF_SHARED)
+			return -EINVAL;
+
+		ret = arch_filter_nmi_handler(new->handler);
+		if (ret < 0)
+			return ret;
+	}
+
 	if (!try_module_get(desc->owner))
 		return -ENODEV;
 
@@ -1152,6 +1173,19 @@ __setup_irq(unsigned int irq, struct irq_desc *desc, struct irqaction *new)
 		}
 
 		init_waitqueue_head(&desc->wait_for_threads);
+
+		if (new->flags & __IRQF_NMI) {
+			ret = __irq_set_nmi_routing(desc, irq, true);
+			if (ret != 1)
+				goto out_mask;
+		} else {
+			ret = __irq_set_nmi_routing(desc, irq, false);
+			if (ret == 1) {
+				pr_err("Failed to disable NMI routing for irq %d\n",
+				       irq);
+				goto out_mask;
+			}
+		}
 
 		/* Setup the type (level, edge polarity) if configured: */
 		if (new->flags & IRQF_TRIGGER_MASK) {
@@ -1757,4 +1791,16 @@ int request_percpu_irq(unsigned int irq, irq_handler_t handler,
 		kfree(action);
 
 	return retval;
+}
+
+/*
+ * Allows architectures to deny requests to set __IRQF_NMI.
+ *
+ * Typically this is used to restrict the use of NMI handlers that do not
+ * originate from arch code. However the default implementation is
+ * extremely permissive.
+ */
+int __weak arch_filter_nmi_handler(irq_handler_t handler)
+{
+	return 0;
 }
