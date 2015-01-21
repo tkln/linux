@@ -302,7 +302,7 @@ validate_group(struct perf_event *event)
 	return 0;
 }
 
-static irqreturn_t armpmu_dispatch_irq(int irq, void *dev)
+irqreturn_t armpmu_dispatch_irq(int irq, void *dev)
 {
 	struct arm_pmu *armpmu;
 	struct platform_device *plat_device;
