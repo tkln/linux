@@ -2054,6 +2054,34 @@ static void serial8250_put_poll_char(struct uart_port *port,
 	serial8250_rpm_put(up);
 }
 
+static int serial8250_poll_request_nmi(struct uart_port *port, irq_handler_t handler)
+{
+	struct uart_8250_port *up = up_to_u8250p(port);
+	int ret;
+
+	ret = devm_request_irq(port->dev, port->irq, handler, IRQF_NMI,
+			       dev_name(port->dev), up);
+	if (ret != 0) {
+		if (0 != devm_request_irq(port->dev, port->irq,
+					  serial8250_interrupt, 0,
+					  dev_name(port->dev), up)) {
+			pr_err("Failed to restore interrupt handler\n");
+		}
+	}
+	return ret;
+}
+
+static void serial8250_poll_free_nmi(struct uart_port *port)
+{
+	struct uart_8250_port *up = up_to_u8250p(port);
+
+	devm_free_irq(port->dev, port->irq, up);
+
+	if (0 != devm_request_irq(port->dev, port->irq, serial8250_interrupt, 0,
+				  dev_name(port->dev), up))
+		pr_err("Failed to restore interrupt handler\n");
+}
+
 #endif /* CONFIG_CONSOLE_POLL */
 
 int serial8250_do_startup(struct uart_port *port)
@@ -3039,6 +3067,8 @@ static struct uart_ops serial8250_pops = {
 #ifdef CONFIG_CONSOLE_POLL
 	.poll_get_char = serial8250_get_poll_char,
 	.poll_put_char = serial8250_put_poll_char,
+	.poll_request_nmi = serial8250_poll_request_nmi,
+	.poll_free_nmi = serial8250_poll_free_nmi,
 #endif
 };
 
