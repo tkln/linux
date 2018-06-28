@@ -1028,6 +1028,12 @@ static void sdhci_set_transfer_mode(struct sdhci_host *host,
 
 	if (data == NULL) {
 		if (host->quirks2 &
+			SDHCI_QUIRK2_TUNE_SKIP_XFERMODE_REG_PROG &&
+				(cmd->opcode == MMC_SEND_TUNING_BLOCK ||
+				 cmd->opcode == MMC_SEND_TUNING_BLOCK_HS200)) {
+			return;
+		}
+		if (host->quirks2 &
 			SDHCI_QUIRK2_CLEAR_TRANSFERMODE_REG_BEFORE_CMD) {
 			/* must not clear SDHCI_TRANSFER_MODE when tuning */
 			if (cmd->opcode != MMC_SEND_TUNING_BLOCK_HS200)
