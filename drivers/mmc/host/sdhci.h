@@ -452,6 +452,8 @@ struct sdhci_host {
 #define SDHCI_QUIRK2_DISABLE_HW_TIMEOUT			(1<<17)
 /* Don't clear the SDHCI_TRANSFER_MODE register on tuning commands */
 #define SDHCI_QUIRK2_TUNE_SKIP_XFERMODE_REG_PROG	(1<<18)
+/* Disable card clock during tuning */
+#define SDHCI_QUIRK2_TUNE_DIS_CARD_CLK			(1<<19)
 
 	int irq;		/* Device IRQ */
 	void __iomem *ioaddr;	/* Mapped address */
